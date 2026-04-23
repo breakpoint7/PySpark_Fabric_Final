@@ -1,0 +1,10 @@
+# External config files that may contain credentials
+Files/
+*.csv
+
+# Python
+__pycache__/
+*.pyc
+
+# Jupyter
+.ipynb_checkpoints/
