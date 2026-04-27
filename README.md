@@ -1,6 +1,6 @@
 # Cosmos DB Live Container Migration for Microsoft Fabric
 
-A set of PySpark notebooks for migrating Cosmos DB containers using Microsoft Fabric. These are a **Fabric-friendly adaptation** of the Databricks-based migration samples from the Azure Cosmos DB Spark Connector repository:
+A set of PySpark notebooks for migrating Cosmos DB containers using Microsoft Fabric. These are a **Fabric-friendly adaptation** of the Databricks-based migration samples from the Azure Cosmos DB Spark Connector repository.  In particular, these are handy moving data across tenants where source and target endpoints are different:
 
 > **Original source:** [DatabricksLiveContainerMigration](https://github.com/Azure/azure-sdk-for-java/tree/main/sdk/cosmos/azure-cosmos-spark_3/Samples/DatabricksLiveContainerMigration)
 
@@ -87,6 +87,19 @@ In the Fabric notebook UI, mark the parameter cells in `03_CosmosDB_Container_Mi
 - **Checkpoint-aware completion** — Counts existing target documents to correctly determine remaining work on resumed runs
 - **Throughput control** — Configurable source throughput throttling to avoid impacting production workloads
 - **Automatic retry** — Failed container migrations are retried automatically (configurable)
+
+## Troubleshooting: Clearing Checkpoints
+
+The migration uses Spark Structured Streaming checkpoints to track progress. This allows interrupted migrations to resume from where they left off. However, a stale or corrupted checkpoint from a previous failed run can cause problems — typically the stream will start but report no data being migrated, even though documents are missing in the target.
+
+To force a **full re-copy from scratch**, set the `clear_checkpoint` parameter to `"true"` in the `03_CosmosDB_Container_Migration` parameter cell (or pass it from the parent notebook's CSV/arguments). This deletes the existing checkpoint so the change feed restarts from the beginning.
+
+Once the migration completes successfully, set it back to `"false"` for any subsequent runs.
+
+> **When to use `clear_checkpoint = "true"`:**
+> - The migration shows "Waiting for first data batch..." indefinitely but the target is missing documents
+> - A previous run failed partway through and retrying doesn't make progress
+> - You want to redo a migration from scratch for any reason
 
 ## Key Differences from the Databricks Version
 
