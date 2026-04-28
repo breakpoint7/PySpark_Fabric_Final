@@ -4,11 +4,20 @@ A set of PySpark notebooks for migrating Cosmos DB containers using Microsoft Fa
 
 > **Original source:** [DatabricksLiveContainerMigration](https://github.com/Azure/azure-sdk-for-java/tree/main/sdk/cosmos/azure-cosmos-spark_3/Samples/DatabricksLiveContainerMigration)
 
-## Important: Snapshot Copy, Not Continuous Sync
+## Important: Count-Based Completion for Live Sources
 
-These notebooks are designed to **copy data from a source container to a target container** using a point-in-time snapshot approach. They count the source documents at the start of the migration and stop once that many rows have been transferred.
+These notebooks use a **count-based completion strategy** that works reliably even when the source container is actively receiving writes:
 
-**This is not intended for continuous synchronization.** If your source container is constantly being updated, these notebooks will copy all documents that exist at migration start but will not keep the target in sync with ongoing changes. For continuous replication scenarios, consider [Azure Cosmos DB Change Feed](https://learn.microsoft.com/en-us/azure/cosmos-db/change-feed) or other purpose-built replication solutions.
+1. The change feed stream runs continuously, copying documents from source to target
+2. Periodically (every 2 minutes by default), actual document counts are queried on both source and target containers
+3. When `target_count >= source_count` (within a configurable tolerance), the stream stops and migration is complete
+4. If the gap stops shrinking (source writes outpace migration), the notebook stops and reports a warning — the operator can then increase throughput, throttle source writes, or run validation to identify the remaining gap
+
+This approach is immune to:
+- **Throttling** — slow stream batches don't cause false completion signals
+- **Duplicate change feed events** — stream progress counters (`numInputRows`) are used only for display, never for completion decisions
+- **Checkpoint resume** — actual counts reflect reality regardless of checkpoint state
+- **Active source writes** — stall detection prevents infinite loops; the tolerance parameter handles minor count differences
 
 ## Notebooks
 
@@ -17,7 +26,7 @@ These notebooks are designed to **copy data from a source container to a target 
 | Notebook | Role | Description |
 |----------|------|-------------|
 | `04_CosmosDB_Parallel_Container_Migration` | Orchestrator | Reads a CSV config file listing container pairs, then runs migrations in parallel using `notebookutils.notebook.runMultiple()` |
-| `03_CosmosDB_Container_Migration` | Worker (child) | Migrates a single container using Cosmos DB change feed streaming. Called by the orchestrator with injected parameters |
+| `03_CosmosDB_Container_Migration` | Worker (child) | Migrates a single container using Cosmos DB change feed streaming with count-based completion. Called by the orchestrator with injected parameters |
 
 ### Validation
 
@@ -82,11 +91,24 @@ In the Fabric notebook UI, mark the parameter cells in `03_CosmosDB_Container_Mi
 
 ## Key Features
 
-- **Parallel execution** — Configurable concurrency (default: 4 containers in parallel)
+- **Count-based completion** — Periodic queries on actual source/target document counts determine when migration is done (not stream progress counters)
+- **Stall detection** — If the document gap stops shrinking (source writes outpace migration), the notebook stops and reports a warning instead of running forever
+- **Active source support** — Works reliably with containers that receive constant writes; configurable tolerance handles minor count differences
 - **Resumable** — Checkpoints stored in Lakehouse Files; interrupted migrations resume from where they left off
-- **Checkpoint-aware completion** — Counts existing target documents to correctly determine remaining work on resumed runs
 - **Throughput control** — Configurable source throughput throttling to avoid impacting production workloads
 - **Automatic retry** — Failed container migrations are retried automatically (configurable)
+
+## Tuning Parameters
+
+The following constants in `03_CosmosDB_Container_Migration` (Step 6) can be adjusted:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `COUNT_CHECK_INTERVAL_SECONDS` | `120` | How often to query source/target counts. Increase for very large containers to reduce overhead |
+| `MATCH_TOLERANCE` | `100` | Absolute document-count tolerance. If `source - target <= tolerance`, migration is considered complete. Increase for very active sources |
+| `MAX_STALL_CHECKS` | `5` | Stop if the gap hasn't shrunk for this many consecutive count checks. Prevents infinite loops when source writes outpace migration |
+| `MAX_TOTAL_SECONDS` | `86400` | Safety timeout (24 hours). Prevents runaway execution |
+| `PROGRESS_POLL_SECONDS` | `10` | How often to print stream batch progress (display only, not used for completion) |
 
 ## Troubleshooting: Clearing Checkpoints
 
